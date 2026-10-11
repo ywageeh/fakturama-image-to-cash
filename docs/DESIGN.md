@@ -48,5 +48,5 @@ Anything unexpected stops the run with a screenshot and the reason. The spec say
 ## What I decided against
 
 - pyautogui: was my first idea, but it clicks fixed coordinates which the task rules out, and it cant read values back
-- writing to the database directly - fast but skips the app and isn't the task
-- an LLM agent for the whole flow: not needed where UIA already finds the control
+- reading the order with OCR because this is what LLMs really excel at so any small model with vision capabilities can do that work almost perfectly and much better than OCR.
+- an LLM agent for the whole flow: not needed where UIA already finds the control but might be more reliable for unseen scenarios, but is not predictable so I don't think it's worth making this probabilistic.
