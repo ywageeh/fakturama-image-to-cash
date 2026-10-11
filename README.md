@@ -205,6 +205,9 @@ shipping were tested by replaying edited data, not by extracting them from an im
 - Dates must display as `Oct 8, 2026` and amounts with a decimal point; the currency symbol or code and thousands separators are ignored. A decimal-comma locale is not supported.
 - Grid reading covers visible rows only (about 12 item lines with the editor maximized); no scrolling.
 - No duplicate check on Cust.Ref.: running the same image twice creates two Orders.
+- A shipping charge is typed into the amount field; no shipping method is created or selected, so the
+  Shipping dropdown still reads "Free of shipping costs" beside the amount. The spec gives no rules for
+  shipping methods (name, gross or net value, VAT mode).
 - `search()` uses the clipboard (overwrites it).
 - OCR'd grid cells are matched exactly (spaces ignored); a misread character means manual review, not a wrong match.
 - The Groq vision model used in testing is a preview model; any OpenAI-compatible vision model can replace it via `.env`.
