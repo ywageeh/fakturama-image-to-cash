@@ -47,6 +47,8 @@ class OrderData(BaseModel):
     debtor: Debtor
     payment: Payment
     items: list[Item]
+    order_discount_pct: Decimal = Decimal(0)  # overall discount on the whole order, if the source has one
+    shipping_net: Decimal = Decimal(0)  # net shipping charge, if the source has one
     total_net: Decimal
     total_vat: Decimal
     total: Decimal

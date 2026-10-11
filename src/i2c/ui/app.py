@@ -24,6 +24,7 @@ from pywinauto.uia_element_info import UIAElementInfo
 
 from ..errors import ManualReview
 from ..rules import parse_number
+from .grid import Row, grid_pane, read_stable
 
 TIMEOUT = 10
 
@@ -109,6 +110,13 @@ class Fakturama:
         lbl = self.find(label, "Text", parent)
         imgs = [c for c in lbl.parent().children() if c.element_info.control_type == "Image"]
         return sorted(imgs, key=lambda c: c.rectangle().top)
+
+    def rows(self, container) -> list[Row]:
+        """The visible rows of the grid inside a view, dialog or pane. Grids are read from the
+        screen, so Fakturama is brought to the front first and the pointer moved off the grid."""
+        self.focus()
+        self.park_mouse()
+        return read_stable(grid_pane(container))
 
     def dialog(self, title: str, timeout: float = TIMEOUT):
         return self.find(title, "Window", timeout=timeout)

@@ -29,6 +29,8 @@ Schema:
   "payment": {"method": "e.g. Bank Transfer", "paid": true/false (true only if status is PAID), "date": "YYYY-MM-DD" or null},
   "items": [{"sku": "", "description": "", "quantity": 0, "unit_net": 0, "vat_pct": 0,
              "discount_pct": 0, "total": "line net total after discount as printed"}],
+  "order_discount_pct": "discount on the whole order in percent, 0 if the document has none (not the per-item discounts)",
+  "shipping_net": "net shipping or delivery charge for the whole order, 0 if none or free",
   "total_net": 0, "total_vat": 0, "total": 0
 }"""
 

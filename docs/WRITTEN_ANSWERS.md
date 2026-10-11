@@ -8,7 +8,7 @@ In order, with rough time budgets. The first two are about trusting the result; 
 
 **2. Make re-runs safe (about 40 min).** Running the same image twice creates a second Order today. Before opening a New Order, I would search Documents for the external reference and stop for manual review if it exists. With that in place, a stopped run can be restarted from the top: the Debtor, VAT, payment method and Products it already created are found and reused, which already works.
 
-**3. Finish spec 4.2: order-level discount and shipping (about 30 min).** These are not extracted from the image. The flow asserts Fakturama's defaults (0% and free shipping) and stops if they differ, which is correct for the sample but not general. I would add the two fields to the extraction schema and the totals check, and set them on the Order.
+**3. Prove order-level discount and shipping from a real image (about 30 min).** The flow enters an overall discount and a shipping charge when the extraction supplies them, and this was tested by replaying edited data. No image with those values has gone through the model, and shipping was only tested with a single VAT rate; with mixed rates I have not confirmed how Fakturama splits the VAT on shipping.
 
 **4. Exercise the ambiguity stops against real data (about 20 min).** The "more than one exact match" rule is unit-tested and the "conflicting definition" checks are in place, but I have not seeded real duplicate or conflicting Debtors, Products, VAT rates or payment methods and watched the flow stop. I would create those duplicates in Fakturama by hand and confirm each stop.
 
@@ -19,5 +19,5 @@ In order, with rough time budgets. The first two are about trusting the result; 
 ### What was skipped or differs from the spec
 
 - The payment method is resolved or created **before** the Debtor editor is opened, not from inside it (spec 2.10). Fakturama fills that dropdown when the editor opens and does not refresh it.
-- Order-level discount and shipping are asserted at their defaults, not extracted (spec 4.2; item 3 above).
+- The follow-up Invoice does not copy a shipping amount typed on the Order, so the flow enters it on the Invoice as well (the spec's 5.1 only says to confirm it was copied).
 - Tested with one sample image and one preview vision model on Groq; the model is a configuration value.

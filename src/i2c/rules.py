@@ -54,22 +54,37 @@ def line_net(item: Item) -> Decimal:
     return money(item.quantity * item.unit_net * (1 - item.discount_pct / 100))
 
 
+def items_net(order: OrderData) -> Decimal:
+    """Sum of the line totals, before any order-level discount or shipping."""
+    return sum((line_net(it) for it in order.items), Decimal(0))
+
+
 def check_order(order: OrderData) -> None:
-    """Arithmetic consistency of the extracted data. Raises ManualReview on mismatch."""
+    """Arithmetic consistency of the extracted data. Raises ManualReview on mismatch.
+
+    Order-level values (spec 4.2): the overall discount comes off the goods before VAT, and
+    shipping is a net amount that carries VAT. Documents differ on whether their printed net
+    total includes shipping, so both readings are accepted."""
     problems = []
     if not order.items:
         problems.append("no items")
     for i, it in enumerate(order.items, 1):
         if abs(line_net(it) - it.total) > TOLERANCE:
             problems.append(f"item {i} ({it.sku}): computed {line_net(it)} != source {it.total}")
-    net = sum((line_net(it) for it in order.items), Decimal(0))
-    vat = sum((line_net(it) * it.vat_pct / 100 for it in order.items), Decimal(0))
-    if abs(net - order.total_net) > TOLERANCE:
-        problems.append(f"total net: computed {net} != source {order.total_net}")
-    if abs(money(vat) - order.total_vat) > TOLERANCE:
-        problems.append(f"total VAT: computed {money(vat)} != source {order.total_vat}")
-    if abs(order.total_net + order.total_vat - order.total) > TOLERANCE:
-        problems.append(f"net + VAT != total {order.total}")
+    if not 0 <= order.order_discount_pct < 100 or order.shipping_net < 0:
+        problems.append(f"implausible order discount {order.order_discount_pct}% / shipping {order.shipping_net}")
+
+    factor = 1 - order.order_discount_pct / 100
+    goods = money(items_net(order) * factor)
+    ship = order.shipping_net
+    if min(abs(goods - order.total_net), abs(goods + ship - order.total_net)) > TOLERANCE:
+        problems.append(f"total net: computed {goods} (+ shipping {ship}) != source {order.total_net}")
+    vat = money(sum((line_net(it) * factor * it.vat_pct / 100 for it in order.items), Decimal(0)))
+    top_rate = max((it.vat_pct for it in order.items), default=Decimal(0))
+    if not vat - TOLERANCE <= order.total_vat <= vat + money(ship * top_rate / 100) + TOLERANCE:
+        problems.append(f"total VAT: computed {vat} (plus VAT on shipping) != source {order.total_vat}")
+    if abs(goods + ship + order.total_vat - order.total) > TOLERANCE:
+        problems.append(f"goods {goods} + shipping {ship} + VAT {order.total_vat} != total {order.total}")
     if order.payment.paid and order.payment.date is None:
         problems.append("status PAID but no payment date")
     if problems:

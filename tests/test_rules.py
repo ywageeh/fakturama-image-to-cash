@@ -84,3 +84,20 @@ def test_cell_eq_truncated():
 ])
 def test_parse_number_ignores_currency_and_thousands(shown, value):
     assert parse_number(shown) == D(value)
+
+
+def test_check_order_with_order_discount_and_shipping():
+    # lines 18.00; 5% order discount -> goods 17.10; shipping 10.00 net; VAT 19% on both
+    kw = dict(order_discount_pct=D(5), shipping_net=D("10.00"), total_vat=D("5.15"), total=D("32.25"))
+    check_order(order(total_net=D("27.10"), **kw))  # printed net total includes shipping
+    check_order(order(total_net=D("17.10"), **kw))  # or excludes it
+    with pytest.raises(ManualReview):
+        check_order(order(total_net=D("18.00"), **kw))  # discount not reflected in the net total
+    with pytest.raises(ManualReview):
+        check_order(order(total_net=D("27.10"), **{**kw, "total": D("22.25")}))  # shipping missing from the total
+
+
+def test_check_order_rejects_unexplained_extra_charge():
+    # a shipping charge on the document that was not extracted makes the totals inconsistent
+    with pytest.raises(ManualReview):
+        check_order(order(total=D("31.42")))

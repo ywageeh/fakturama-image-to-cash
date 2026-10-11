@@ -164,7 +164,7 @@ run on a new installation (about 4 minutes, exit code 0). Result in Data > Docum
 | 3.4-3.6 VAT: reuse only if name, value and code S match (row opened to check); else create | ✅ |
 | 3.7-3.11 Product create (gross price without line discount) | ✅ |
 | 3.13-3.16 Item line Qty, U.Price, VAT, Discount, line Price | ✅ |
-| 4.1-4.3 Before saving: addresses, every line, 0% discount, free shipping, Total Net / VAT / Total | ✅ |
+| 4.1-4.3 Before saving: every line, overall discount and shipping (from the image, else 0% / free), addresses, Total Net / VAT / Total | ✅ |
 | 4.4-4.7 Save, Documents row check, follow-up Invoice | ✅ |
 | 5.1 Invoice: Cust.Ref., addresses, Order Date, VAT mode, item lines, totals | ✅ |
 | 5.2-5.3 Payment method; PAID -> tick, date, full value; not PAID -> left clear | ✅ |
@@ -175,23 +175,25 @@ Branches exercised on the real app, beyond the sample (replayed from JSON, see b
 - existing Debtor / Products / VAT / payment method (reuse paths),
 - **not PAID** (paid left clear, no date or value, list state `unpaid`),
 - **identical billing and delivery address** (one address with both roles),
-- a second payment method (**Credit Card** -> code "Credit card") and VAT rate (7%), a 5% line discount.
+- a second payment method (**Credit Card** -> code "Credit card") and VAT rate (7%), a 5% line discount,
+- an **order-level discount (5%) and shipping charge (10.00)**, on the Order and the Invoice.
 
 Not exercised: the "ambiguous / conflicting match" stops against real duplicate records (the rule
-itself is unit-tested), and any image other than the sample.
+itself is unit-tested), and any image other than the sample. In particular, order-level discount and
+shipping were tested by replaying edited data, not by extracting them from an image that shows them.
 
-## Deviations from the spec
+## Deviation from the spec
 - **Payment method before the Debtor editor.** The Debtor's Payment dropdown is filled when the editor
   opens and doesn't pick up a method created meanwhile, so the method is resolved/created first
   (the Order tab stays open throughout, as required).
-- **Order-level discount and shipping (4.2)** are not extracted from the image; the flow asserts the
-  defaults (0%, free shipping) and stops for manual review if they differ.
 
 ## Fakturama quirks the code handles
 - SWT ignores UIA-only changes to combos, checkboxes and date fields → real keystrokes/clicks.
 - Date fields edit one segment at a time: click the month segment, type the digits slowly.
 - Data > Documents can open on a category (e.g. Invoices/unpaid) → the Orders / Invoices node is selected first.
 - "... has already ordered n times" popup for known customers → dismissed, text kept in the run folder.
+- The follow-up Invoice copies the overall discount but not a shipping amount typed on the Order → the amount is entered on the Invoice too, then the totals are checked.
+- Grids are read from the screen → Fakturama is brought to the front before every read.
 - Multi-line fields (Company, Description) need a real keystroke after UIA SetValue to register.
 - Eclipse may keep keyboard focus in a list view → every typing step verifies focus first.
 - The product selector auto-picks when the search leaves one match → search terms are pasted whole,

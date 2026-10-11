@@ -8,9 +8,9 @@ from decimal import Decimal
 
 from .errors import ManualReview
 from .models import Address, Debtor, Item, OrderData
-from .rules import TOLERANCE, cell_eq, debtor_matches, gross_price, line_net, norm, parse_number, payment_code, pick_exact, vat_name
+from .rules import TOLERANCE, cell_eq, debtor_matches, gross_price, items_net, line_net, norm, parse_number, payment_code, pick_exact, vat_name
 from .ui.app import Fakturama
-from .ui.grid import Row, grid_pane, read_stable
+from .ui.grid import Row
 
 ORDER_TAB: tuple = ("New Order",)  # + the proposed number (e.g. "PO000001"), the title after saving
 INVOICE_TAB: tuple = ("New Invoice",)  # + e.g. "INV000001"
@@ -44,7 +44,7 @@ def run(app: Fakturama, order: OrderData) -> None:
         app.step(f"3.13-3.16 Item {n}: Qty {item.quantity}, Discount {item.discount_pct}%, verify the line")
         fill_line(app, item)
 
-    app.step("4.1-4.3 Check addresses, every line, discount, shipping and totals against the source")
+    app.step("4.1-4.3 Check every line, set order-level discount/shipping, check addresses and totals")
     check_order(app, order)
     app.screenshot("order_complete")
     app.step("4.4 Save the Order")
@@ -97,7 +97,7 @@ def select_debtor(app: Fakturama, debtor: Debtor) -> bool:
     app.click(app.icons_near("Addresses", ed)[0])  # upper icon = existing contact (NOT the green +)
     dlg = app.dialog("Select the address")
     app.search(dlg, debtor.company or debtor.last_name)
-    row = pick_exact(read_stable(grid_pane(dlg)), lambda r: debtor_matches(r.cells, debtor), "debtor")
+    row = pick_exact(app.rows(dlg), lambda r: debtor_matches(r.cells, debtor), "debtor")
     if row is None:
         app.press("Cancel", dlg)
         return False
@@ -188,7 +188,7 @@ def ensure_payment_method(app: Fakturama, method: str) -> None:
     app.nav("terms of payment")
     view = app.editor("terms of payment")
     app.search(view, method)
-    row = pick_exact(read_stable(grid_pane(view)), lambda r: cell_eq(r.cells.get("Name", ""), method), "payment")
+    row = pick_exact(app.rows(view), lambda r: cell_eq(r.cells.get("Name", ""), method), "payment")
     if row is not None:  # 2.10.2: reuse only a non-conflicting definition
         ed = _open_row(app, row, method)  # read the definition from its editor: exact, and the code isn't a list column
         problems = []
@@ -250,7 +250,7 @@ def select_product(app: Fakturama, item: Item) -> bool:
         if len(rows) == before + 1 and cell_eq(rows[-1].cells.get("Item No.", ""), item.sku):
             return True
         raise ManualReview("product", f"selector auto-picked an unexpected product for {item.sku}")
-    rows = read_stable(grid_pane(dlg))
+    rows = app.rows(dlg)
     row = pick_exact(rows, lambda r: cell_eq(r.cells.get("Item No.", ""), item.sku), "product")
     if row is None:
         app.press("Cancel", dlg)
@@ -262,7 +262,7 @@ def select_product(app: Fakturama, item: Item) -> bool:
 def _item_rows(app: Fakturama, tab: tuple) -> list[Row]:
     app.maximize(tab)  # otherwise only ~1 item row is visible
     ed = app.editor(tab)
-    return read_stable(grid_pane(app.by_label("Items", "Pane", ed)))
+    return app.rows(app.by_label("Items", "Pane", ed))
 
 
 def _edit_cell(app: Fakturama, row: Row, column: str, value: Decimal) -> None:
@@ -281,7 +281,7 @@ def ensure_vat(app: Fakturama, pct: Decimal) -> None:
     app.nav("VATs")
     view = app.editor("VATs")
     app.search(view, name)
-    row = pick_exact(read_stable(grid_pane(view)), lambda r: cell_eq(r.cells.get("Name", ""), name), "vat")
+    row = pick_exact(app.rows(view), lambda r: cell_eq(r.cells.get("Name", ""), name), "vat")
     if row is not None:  # 3.5
         ed = _open_row(app, row, name)  # the VAT code isn't a list column
         code = app.find("VAT code (E-Invoice)", "ComboBox", ed).iface_value.CurrentValue
@@ -371,31 +371,49 @@ def _check_lines(app: Fakturama, tab: tuple, order: OrderData, step: str) -> Non
 
 
 def _check_totals(app: Fakturama, ed, order: OrderData, step: str) -> None:
-    """Total Net, VAT and Total as shown; overall Discount 0% and free shipping."""
+    """4.2-4.3: overall Discount, Shipping and the totals as Fakturama shows them.
+    Fakturama's 'Total Net' is the sum of the lines, before the overall discount and shipping."""
     def number(el) -> Decimal:
         return parse_number(el.iface_value.CurrentValue)
 
     problems = []
-    for label, expected in (("Total Net", order.total_net), ("VAT", order.total_vat), ("Total", order.total)):
+    for label, expected in (("Total Net", items_net(order)), ("VAT", order.total_vat), ("Total", order.total)):
         shown = number(app.find(label, "Edit", ed))
         if abs(shown - expected) > TOLERANCE:
             problems.append(f"{label} shows {shown}, source says {expected}")
-    # 4.2: the sample carries no order-level discount or shipping, so the defaults must stand
-    if number(app.find("Discount", "Edit", ed)) != 0:
-        problems.append("overall Discount is not 0%")
-    shipping = app.find("Shipping", "ComboBox", ed).iface_value.CurrentValue
-    if norm(shipping) != norm(FREE_SHIPPING) or number(app.by_label("Shipping", "Edit", ed, index=1)) != 0:
-        problems.append(f"Shipping is {shipping!r}, expected {FREE_SHIPPING!r} / 0.00")
+    discount = abs(number(app.find("Discount", "Edit", ed)))  # shown negative, e.g. "-5%"
+    if discount != order.order_discount_pct:
+        problems.append(f"overall Discount shows {discount}%, source says {order.order_discount_pct}%")
+    shipping = number(app.by_label("Shipping", "Edit", ed, index=1))
+    if shipping != order.shipping_net:
+        problems.append(f"Shipping shows {shipping}, source says {order.shipping_net}")
+    method = app.find("Shipping", "ComboBox", ed).iface_value.CurrentValue
+    if order.shipping_net == 0 and norm(method) != norm(FREE_SHIPPING):
+        problems.append(f"Shipping method is {method!r}, expected {FREE_SHIPPING!r}")
     if problems:
         raise ManualReview(step, "; ".join(problems))
+
+
+def set_order_level(app: Fakturama, ed, order: OrderData, step: str) -> None:
+    """4.2: Discount stays 0% and Shipping stays free unless the source supplies order-level
+    values. Each field is only touched when it differs from the source."""
+    discount = app.find("Discount", "Edit", ed)
+    if abs(parse_number(discount.iface_value.CurrentValue)) != order.order_discount_pct:
+        shown = app.type_into(discount, f"{order.order_discount_pct:f}")
+        if abs(parse_number(shown)) != order.order_discount_pct:
+            raise ManualReview(step, f"overall Discount shows {shown!r}, expected {order.order_discount_pct}%")
+    shipping = app.by_label("Shipping", "Edit", ed, index=1)
+    if parse_number(shipping.iface_value.CurrentValue) != order.shipping_net:
+        app.set_number(shipping, order.shipping_net)
 
 
 # ---- 4. Complete and save the Order ----------------------------------------------
 
 def check_order(app: Fakturama, order: OrderData) -> None:
-    """4.1-4.3, right before saving: addresses, every line, discount/shipping, totals."""
+    """4.1-4.3, right before saving: every line, order-level discount/shipping, addresses, totals."""
     _check_lines(app, ORDER_TAB, order, "order")
     ed = app.editor(ORDER_TAB)
+    set_order_level(app, ed, order, "order")
     _check_addresses(app, ed, order.debtor, "order")
     _check_totals(app, ed, order, "order")
 
@@ -415,7 +433,7 @@ def create_invoice(app: Fakturama) -> None:
 # ---- 5. Invoice ------------------------------------------------------------------
 
 def check_invoice(app: Fakturama, order: OrderData) -> None:
-    """5.1: Cust.Ref., addresses, Order Date, VAT mode, item lines and totals came over from the Order."""
+    """5.1: Cust.Ref., addresses, Order Date, VAT mode, item lines and totals match the Order."""
     _check_lines(app, INVOICE_TAB, order, "invoice")
     ed = app.editor(INVOICE_TAB)
     shown = {
@@ -430,6 +448,9 @@ def check_invoice(app: Fakturama, order: OrderData) -> None:
     if problems:
         raise ManualReview("invoice", "; ".join(problems))
     _check_addresses(app, ed, order.debtor, "invoice")
+    # Fakturama's follow-up action copies the overall discount but not a shipping amount typed
+    # on the Order (it takes the shipping method's own value), so bring the Invoice in line.
+    set_order_level(app, ed, order, "invoice")
     _check_totals(app, ed, order, "invoice")
 
 
@@ -471,7 +492,7 @@ def _document_row(app: Fakturama, kind: str, number: str) -> Row:
     app.find(kind, "TreeItem", view).click_input()
     app.park_mouse()
     time.sleep(0.8)
-    hits = [r for r in read_stable(grid_pane(view)) if cell_eq(r.cells.get("Document", ""), number)]
+    hits = [r for r in app.rows(view) if cell_eq(r.cells.get("Document", ""), number)]
     if len(hits) != 1:
         raise ManualReview("verify", f"expected 1 row for {number} under {kind}, found {len(hits)}")
     return hits[0]
