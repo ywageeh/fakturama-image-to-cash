@@ -72,7 +72,7 @@ A new installation is all the flow needs: it creates the payment method, Debtor,
 .venv/Scripts/python -m pytest -q
 ```
 
-Expect `13 passed`. These test the spec rules and need neither Fakturama nor the LLM.
+Expect `22 passed`. These test the spec rules and need neither Fakturama nor the LLM.
 
 ## Run
 
@@ -139,12 +139,14 @@ Records saved before the stop (for example a new Debtor) stay, and the next run 
 
 | File | Role |
 |---|---|
+| `src/i2c/cli.py`, `config.py`, `errors.py` | Command line entry point, `.env` settings, the `ManualReview` stop |
 | `src/i2c/models.py` | Extracted data schema |
 | `src/i2c/rules.py` | Spec rules: arithmetic checks, gross price, VAT naming, payment-code mapping, exact/truncated cell matching |
 | `src/i2c/llm.py`, `extract.py` | Provider-agnostic LLM call (JSON mode + image), validate, one retry with error feedback |
 | `src/i2c/ui/app.py` | UIA helpers: find by name/label, verified focus, set_text/number/date/combo/check, save, maximize/restore |
 | `src/i2c/ui/grid.py` | OCR-based reading of NatTable grids: column lines from pixels, columns spread apart before OCR |
 | `src/i2c/flow.py` | The spec's Order-first flow, one function per step |
+| `tests/` | Unit tests for the rules, and the sample order's hand-checked expected extraction |
 | `tools/dump_uia.py` | Dev: print the UIA tree of an editor or dialog |
 | `tools/discard_editors.py` | Dev: close all editors without saving (reset after an aborted run) |
 
@@ -171,7 +173,7 @@ run on a new installation (about 4 minutes, exit code 0). Result in Data > Docum
 | 5.4-5.5 Save; Invoice row state and total; source Order still open | ✅ |
 | 5.6 Invoice closed, reopened from Documents; stored method, paid, date, value confirmed | ✅ |
 
-Branches exercised on the real app, beyond the sample (replayed from JSON, see below):
+Branches exercised on the real app, beyond the sample (replayed from edited JSON, see Run):
 - existing Debtor / Products / VAT / payment method (reuse paths),
 - **not PAID** (paid left clear, no date or value, list state `unpaid`),
 - **identical billing and delivery address** (one address with both roles),
@@ -203,7 +205,7 @@ shipping were tested by replaying edited data, not by extracting them from an im
 
 ## Known limitations
 - Dates must display as `Oct 8, 2026` and amounts with a decimal point; the currency symbol or code and thousands separators are ignored. A decimal-comma locale is not supported.
-- Grid reading covers visible rows only (about 12 item lines with the editor maximized); no scrolling.
+- Grid reading covers visible rows only (about 15 item lines on a 1920x1080 screen); no scrolling.
 - No duplicate check on Cust.Ref.: running the same image twice creates two Orders.
 - A shipping charge is typed into the amount field; no shipping method is created or selected, so the
   Shipping dropdown still reads "Free of shipping costs" beside the amount. The spec gives no rules for
