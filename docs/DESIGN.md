@@ -1,59 +1,52 @@
-# Fakturama Image-to-Cash: Design
+# Design - Fakturama Image to Cash
 
-## Goal and constraints
+## Overall idea
 
-Turn one order image into a saved Order and a linked Invoice in Fakturama, with the Debtor, Products, VAT rate and payment method resolved or created on the way, and the payment status applied. Three constraints shape the design:
+Two parts that stay separate:
 
-- **No hardcoded coordinates or fixed layout.** Every control has to be found at run time.
-- **Verify each step before the next.** A wrong record in an accounting system is worse than no record.
-- **Stop when unsure.** The spec names many "stop for manual review" cases; the system should treat those as a normal outcome, not an error path bolted on later.
+1. A vision LLM reads the order image once and gives back structured data (JSON).
+2. Normal code drives Fakturama step by step following the spec, and checks after every action.
 
-## Approach in one paragraph
+The LLM never clicks anything. The task is a fixed procedure so a script is faster and I can tell exactly what happened at each step, an agent clicking around would be harder to verify.
 
-A vision LLM reads the image once and returns typed, structured data. Deterministic code checks that data, then drives Fakturama through Microsoft UI Automation (UIA), following the spec's steps in order. OCR is used only where UIA cannot see: the data grids. The LLM never drives the UI. Each step reads back what it wrote, and any mismatch or ambiguity raises a single "manual review" stop that saves a screenshot and the reason.
+## Finding the controls
 
-## Control discovery and grounding
+No coordinates are stored anywhere. I use Microsoft UI Automation (UIA) through pywinauto, which gives a tree of the app's controls with their type and name.
 
-Before choosing, I would spend thirty minutes inspecting Fakturama with a UIA tree viewer, because the answer depends on what the application exposes. Fakturama is an Eclipse/SWT application, so I expect standard widgets to be visible to UIA and custom-drawn ones not to be. That inspection found three tiers, and the design uses a different technique for each.
+Before deciding I inspected Fakturama with a UIA viewer to see what it actually exposes. There are 3 cases:
 
-**Tier 1: named controls (most of the application).** Toolbar buttons carry their tooltip as a name ("Create: New Order"), navigation entries and most form fields carry their label ("Cust.Ref.", "Street", "Alias name"), and dialogs carry their title. These are found by name and role, scoped to the editor they belong to, since several editors contain a field called "VAT" or "Name".
+- Controls with a name - most of the app. The toolbar button is called "Create: New Order", the field is called "Cust.Ref." and so on. Found by name + type
+- Controls without a name (date, first/last name, zip/city). Found from the label beside them, e.g the text box right of "Date". The icons next to "Addresses" have no name either so I take them by their order under that label.
+- Tables. Fakturama draws them itself so UIA only sees an empty box. For these I screenshot only that box and read it with OCR. UIA still tells me where the box is, so clicking a row is calculated at runtime
 
-**Tier 2: unnamed controls, found by relationship.** Some fields have no name of their own (document number, date, first and last name, ZIP and city). They are found from the label beside them: the nearest control of the right type on the same row. Icon buttons with no name (select existing contact versus the green plus) are found by their position in the tree under a named label, top to bottom. This survives window resizing and layout shifts because it never depends on absolute position.
+Some controls (dropdowns, checkboxes, date fields) ignore changes made through UIA so they get real key presses. And nothing gets typed until the field is confirmed to have focus.
 
-**Tier 3: grids, read by OCR.** The item table, the list views and the selector dialogs are drawn by the application and appear to UIA as one empty pane. For these, UIA still supplies the pane's rectangle; the system screenshots only that rectangle, finds the column lines in the pixels, and runs OCR so that each word lands in a known column. The header row names the columns. A click on a row or cell uses a point computed from that live rectangle, so it is still not a stored coordinate.
+## Reading the image
 
-Two rules apply across all tiers. Input goes through real keystrokes and clicks where the application ignores UIA-only changes (dropdowns, checkboxes, date fields). And nothing is typed until the target is confirmed to hold keyboard focus, so keystrokes cannot land in the wrong place.
+One call to a vision model with a fixed schema: order date, reference, customer and addresses, payment, items and totals. Any OpenAI compatible endpoint works, the model is just config.
 
-## Image extraction
+I dont trust the answer directly. The document checks itself: qty x price - discount has to equal the line total, lines have to sum to the net total and net + VAT has to equal the total. If a digit is misread the math fails. The model gets one retry with the errors, after that the run stops before touching Fakturama.
 
-One call to a vision model, with the image and a fixed schema: order date, external reference, debtor (company, contact, alias, both addresses, email, phone), payment method, paid status and date, and each item (SKU, description, quantity, unit net price, VAT, discount, line total), plus the document totals. The client speaks the OpenAI-compatible chat API, so the model is a configuration choice, not a code dependency.
+## Verification
 
-The model's answer is not trusted as given. It is parsed into typed fields (dates as dates, money as decimals) and then checked arithmetically: each line's quantity times unit price less discount must equal the printed line total, the lines must sum to the net total, and net plus VAT must equal the gross total. An invoice-like document carries this redundancy for free, and it catches most misread digits. On failure the model gets one retry with the specific errors; a second failure stops for manual review before the UI is touched.
+Every "find or create" step works the same way: search from the open Order, accept only one exact match, create it if there is none, stop if there are several. Then select it again from the Order which proves it was saved.
 
-## Flow, verification and manual review
+- each field is read back after setting it
+- the whole document is checked against the image before saving
+- after saving, the row in Documents is checked and the Invoice is reopened
 
-The flow is a plain sequence of functions, one per spec step, in the spec's order: open the Order, resolve the Debtor, resolve each Product, complete and save, create the Invoice from the Order's follow-up action, apply payment, verify. Each "resolve" step is the same shape: search from the open Order, accept exactly one exact match, create the record if there is none, stop if there are several or the existing definition conflicts, then select it from the Order again to prove it was saved.
-
-Verification happens at three levels: every field is read back after it is set; every document is checked as a whole before saving (addresses, each line, totals against the source); and after saving, the document's row in the Documents list is checked, and the Invoice is reopened to confirm what was stored.
-
-Business rules from the spec (gross price formula, VAT naming, payment code mapping, exact-match definition) live in one module of pure functions with unit tests, separate from anything that touches the screen.
+Anything unexpected stops the run with a screenshot and the reason. The spec says "stop for manual review" in many places so this is a normal outcome not an error.
 
 ## Tradeoffs
 
-- **Scripted flow instead of an LLM agent driving the screen.** The spec is a fixed procedure, so a scripted flow is faster, repeatable and auditable step by step. The cost is that it knows only this flow; a changed Fakturama screen means a code change, not a prompt change.
-- **UIA first instead of vision everywhere.** UIA gives exact values and stable identification where it works. The cost is a dependency on control names, which would change with the interface language, and on Fakturama-specific behaviour that has to be learned by inspection.
-- **OCR for grids.** It is the only way to read them through the interface, but it is the least reliable part: small text, truncated cells, and a few seconds per read. The design limits the damage by filtering lists with the search box first, comparing cells exactly, and treating any misread as a manual-review stop, never as a match.
-- **Arithmetic validation instead of a second model.** Cheap and strong for numbers, but it does not catch a misread name or address. A second independent read would.
-- **Stop instead of recover.** Simple and safe, at the cost of more human interventions. A stopped run leaves records already created; the next run finds and reuses them, which is the spec's own existence-check behaviour.
+- Script instead of an agent: predictable, but it only knows this flow. If the screen changes the code has to change
+- UIA first: exact values, but depends on the English control names
+- OCR for tables is the weakest part - small text, cut off cells, a few seconds per read. A misread stops the run, its never treated as a match.
+- Math checks catch wrong numbers but not a misspelled name
+- Stopping instead of recovering is simple and safe but means more manual work
 
-## Alternatives considered
+## What I decided against
 
-- **Coordinate-based automation (for example pyautogui).** Rejected: it is what the brief rules out, and it cannot read values back.
-- **Writing to Fakturama's database directly.** Fast and exact, but it bypasses the application's own rules and is not what the task asks for. Reading the database only to cross-check results would be a reasonable later addition.
-- **A computer-use agent for the whole flow.** More adaptable to interface change, but slower, harder to verify, and unnecessary where UIA already identifies the control. Worth keeping as a fallback for locating a control when the first three tiers fail.
-
-## Main risks
-
-1. Fakturama behaviour that only appears in use (dropdowns that do not refresh, dialogs that close themselves, popups). Mitigation: inspect early, verify after every action, stop on surprise.
-2. OCR errors in grids. Mitigation as above; measure on more than one sample.
-3. Extraction errors the arithmetic cannot see (names, addresses, SKUs). Mitigation: exact-match rules mean a wrong name creates a new record instead of corrupting an existing one; a human still needs to review new master data.
+- pyautogui: was my first idea, but it clicks fixed coordinates which the task rules out, and it cant read values back
+- writing to the database directly - fast but skips the app and isn't the task
+- an LLM agent for the whole flow: not needed where UIA already finds the control
